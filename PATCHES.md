@@ -59,14 +59,43 @@ an unrelated image rebuild.
 every runner image builds with `dev-2026-11`. Check `responses.odin` on `origin/main`
 before the next rebase; if it says `opt` rather than `&opt`, the patch is obsolete.
 
+## `Response_Writer`: flush did not reach the socket
+
+`response_writer_init` installs an `io.Stream` whose `.Flush` case moved the pending bytes
+into the response's own buffer (`r._buf`). Only `.Close` wrote that buffer to the
+connection, through a single `nbio.send` that also ends the request. So `io.flush` was a
+no-op on the wire: a handler streaming an event per token delivered nothing until it
+returned.
+
+Measured with a two-event SSE handler (write, flush, sleep 500 ms, write, flush, close):
+
+| | first byte | framing |
+|---|---:|---|
+| upstream `26da442` | 502.7 ms | both events plus the terminator in one write |
+| this patch | 0.2 ms | first event in its own chunk, second at 500.9 ms |
+
+That is the difference between a streaming endpoint and a buffered one, and it is what
+made OdinLLM's SSE surface unusable behind a proxy.
+
+The patch keeps one send in flight per response: bytes written while a send runs stay in
+`_buf`, and that send's callback issues the next one, so chunk order is preserved and the
+buffer a send reads from is never reallocated underneath it. Streamed bytes are copied
+into the connection's request arena, which outlives the send and is freed when the
+response completes. `response_status` stops rewriting the status line after the first
+streamed byte, because the heading is already on the wire.
+
+Offered upstream as [PR #127](https://github.com/laytan/odin-http/pull/127) (branch
+`feat/writer-flush-to-socket`). **Drop this patch** when upstream takes it: check that
+`response.odin` on `origin/main` sends from the `.Flush` case before the next rebase.
+
 ## Keeping this fork current
 
 ```sh
 git fetch upstream
-git rebase upstream/main        # keeps the patch as the only local commit
+git rebase upstream/main        # keeps the patches as the only local commits
 git push origin main
 ```
 
-Then bump `vendor/odin-http` in OdinLLM to the new commit. The fork has no other local
-branches and no other local changes, so a rebase should always apply cleanly or be a
-one-hunk conflict.
+Then bump `vendor/odin-http` in OdinLLM to the new commit. The fork carries no local
+branches beyond the two patch branches that back the upstream PRs, so a rebase should
+apply cleanly or be a small conflict at the files named above.
