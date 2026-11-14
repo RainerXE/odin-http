@@ -85,7 +85,7 @@ response completes. `response_status` stops rewriting the status line after the 
 streamed byte, because the heading is already on the wire.
 
 Offered upstream as [PR #127](https://github.com/laytan/odin-http/pull/127) (branch
-`feat/writer-flush-to-socket`). **Drop this patch** when upstream takes it: check that
+`pr/writer-flush-to-socket`). **Drop this patch** when upstream takes it: check that
 `response.odin` on `origin/main` sends from the `.Flush` case before the next rebase.
 
 ## Keeping this fork current
